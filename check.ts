@@ -11,6 +11,7 @@ if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
 
 const resend = new Resend(RESEND_API_KEY);
 
+const ITERATION_MAX_COUNT = 20;
 const TARGET_URL =
   "https://www.keishicho-gto.metro.tokyo.lg.jp/keishicho-u/reserve/offerList_detail?tempSeq=445&accessFrom=offerList";
 
@@ -31,19 +32,24 @@ async function sendEmail(subject: string, body: string): Promise<void> {
 
 async function main() {
   console.log("Launching browser...");
-  await using browser = await launch();
+  await using browser = await launch({ headless: true });
   await using page = await browser.newPage(TARGET_URL);
+
   console.log(`Navigated to: ${TARGET_URL}`);
 
-  // Wait for the page to settle
   await page.waitForNetworkIdle({ idleConnections: 0, idleTime: 1000 });
 
   let iteration = 0;
   while (true) {
-    iteration++;
-    console.log(`\n--- Check iteration ${iteration} ---`);
+    if (iteration >= ITERATION_MAX_COUNT) {
+      console.log(`Reached maximum iteration count. Exiting.`);
+      return;
+    }
 
-    // Step 2: Check for svg with aria-label="予約可能" inside table.time--table
+    iteration++;
+    console.log(`Checking page ${iteration}:`);
+
+    // check for svg with aria-label="予約可能" inside `table.time--table` (appointment exists svg)
     const hasReservation = await page.evaluate(() => {
       const table = document.querySelector("table.time--table");
       if (!table) return false;
@@ -64,7 +70,7 @@ async function main() {
 
     console.log("No reservation found on this page.");
 
-    // Step 4: Find the next button
+    // find the next button
     const buttonState = await page.evaluate(() => {
       const inputs = document.querySelectorAll("input.button");
       for (const input of inputs) {
@@ -75,27 +81,29 @@ async function main() {
           };
         }
       }
-      return { found: false, disabled: false };
+      return {
+        found: false,
+        disabled: false,
+      };
     });
 
     if (!buttonState.found) {
-      // Step 5: Button not found
       console.log("Next page button not found!");
       await sendEmail(
         "Next page button not found",
-        `The '2週後＞' button was not found on the page. The page structure may have changed.`,
+        "Page structure likely chaged.",
       );
       return;
     }
 
     if (buttonState.disabled) {
-      // Step 7: Button is disabled — no more pages to check
       console.log("Next page button is disabled. No more pages to check.");
       return;
     }
 
-    // Step 8: Click the button and continue
-    console.log(`Clicking '2週後＞' button...`);
+    // go to next page and try again
+    console.log(`Clicking next button`);
+
     await page.evaluate(() => {
       const inputs = document.querySelectorAll("input.button");
       for (const input of inputs) {
@@ -106,9 +114,10 @@ async function main() {
       }
     });
 
-    // Wait for navigation / page update
-    await page.waitForNetworkIdle({ idleConnections: 0, idleTime: 1000 });
-    console.log("Page updated, checking again...");
+    await page.waitForNetworkIdle({
+      idleConnections: 0,
+      idleTime: 1000,
+    });
   }
 }
 
