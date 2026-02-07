@@ -3,24 +3,27 @@
 import { launch } from "jsr:@astral/astral";
 import { Resend } from "npm:resend";
 
+// 30 mins
+const INTERVAL = 30 * 60 * 1000;
+
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
 const NOTIFY_EMAIL = Deno.env.get("NOTIFY_EMAIL")!;
 
 // every 3 hours, send an email indicating the script is still running
 const CHECK_IN_EMAIL_INTERVAL_SECS = 10800;
-const CHECK_IN_EMAIL_KEY = "lastCheckInEmailSentAt";
 
 if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
   console.error("env variables missing");
   Deno.exit(1);
 }
 
-const kv = await Deno.openKv();
 const resend = new Resend(RESEND_API_KEY);
 
 const ITERATION_MAX_COUNT = 20;
 const TARGET_URL =
   "https://www.keishicho-gto.metro.tokyo.lg.jp/keishicho-u/reserve/offerList_detail?tempSeq=445&accessFrom=offerList";
+
+let lastCheckInEmail = 0;
 
 async function sendEmail(subject: string, body: string): Promise<void> {
   console.log(`Sending email: ${subject}`);
@@ -39,13 +42,12 @@ async function sendEmail(subject: string, body: string): Promise<void> {
 
 async function checkInEmail(): Promise<void> {
   const now = Date.now();
-  const lastCheckIn = await kv.get<number>([CHECK_IN_EMAIL_KEY]);
   if (
-    !lastCheckIn.value ||
-    now - lastCheckIn.value >= CHECK_IN_EMAIL_INTERVAL_SECS * 1000
+    !lastCheckInEmail ||
+    now - lastCheckInEmail >= CHECK_IN_EMAIL_INTERVAL_SECS * 1000
   ) {
     console.log("Sending check-in email...");
-    await kv.set([CHECK_IN_EMAIL_KEY], now);
+    lastCheckInEmail = now;
     await sendEmail(
       "Reservation checker is running",
       "The reservation checker script is still running without errors.",
@@ -150,15 +152,20 @@ async function main() {
   }
 }
 
-main().catch(async (err) => {
-  console.error("Script error:", err);
-  try {
-    await sendEmail(
-      "Reservation checker error",
-      `The reservation checker script encountered an error:<br><pre>${String(err)}</pre>`,
-    );
-  } catch {
-    // ignore email failure during error handling
-  }
-  Deno.exit(1);
-});
+const run = () => {
+  console.log("Starting reservation check...");
+  main().catch(async (err) => {
+    console.error("Script error:", err);
+    try {
+      await sendEmail(
+        "Reservation checker error",
+        `The reservation checker script encountered an error:<br><pre>${String(err)}</pre>`,
+      );
+    } catch {
+      // ignore email failure during error handling
+    }
+  });
+};
+
+run();
+setInterval(run, INTERVAL);
