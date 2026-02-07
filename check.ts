@@ -81,8 +81,9 @@ async function main() {
     const hasReservation = await page.evaluate(() => {
       const table = document.querySelector("table.time--table");
       if (!table) return false;
-      // const svg = table.querySelector(`svg[aria-label="予約可能"]`);
-      const svg = document.querySelector(`svg[aria-label="予約可能"]`);
+      // uncomment for testing happy path (it will find the available svg on the legend)
+      // const svg = document.querySelector(`svg[aria-label="予約可能"]`);
+      const svg = table.querySelector(`svg[aria-label="予約可能"]`);
       return svg !== null;
     });
 
