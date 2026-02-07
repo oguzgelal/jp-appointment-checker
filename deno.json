@@ -1,5 +1,11 @@
 {
   "compilerOptions": {
     "lib": ["deno.window", "dom"]
+  },
+  "imports": {
+    "puppeteer-core": "npm:puppeteer-core@^24.37.2",
+    "puppeteer-extra": "npm:puppeteer-extra@^3.3.6",
+    "puppeteer-extra-plugin-stealth": "npm:puppeteer-extra-plugin-stealth@^2.11.2",
+    "resend": "npm:resend@^6.9.1"
   }
 }

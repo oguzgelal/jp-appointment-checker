@@ -1,23 +1,25 @@
 /// <reference lib="deno.unstable" />
 
-import { Browser, connect } from "jsr:@astral/astral";
+import puppeteer from "npm:puppeteer-core";
 import { Resend } from "npm:resend";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
 const NOTIFY_EMAIL = Deno.env.get("NOTIFY_EMAIL")!;
-const BROWSERLESS_TOKEN = Deno.env.get("BROWSERLESS_TOKEN")!;
+// const BROWSERLESS_TOKEN = Deno.env.get("BROWSERLESS_TOKEN")!;
 
 // every 3 hours, send an email indicating the script is still running
 const CHECK_IN_EMAIL_INTERVAL_SECS = 10800;
 const CHECK_IN_EMAIL_KEY = "lastCheckInEmailSentAt";
 
-if (!RESEND_API_KEY || !NOTIFY_EMAIL || !BROWSERLESS_TOKEN) {
+if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
   console.error("env variables missing");
   Deno.exit(1);
 }
 
 const kv = await Deno.openKv();
 const resend = new Resend(RESEND_API_KEY);
+
+const nextButtonSelector = `input.button[value*='2週後']`;
 
 const ITERATION_MAX_COUNT = 20;
 const TARGET_URL =
@@ -26,7 +28,7 @@ const TARGET_URL =
 async function sendEmail(subject: string, body: string): Promise<void> {
   console.log(`Sending email: ${subject}`);
   const { error } = await resend.emails.send({
-    from: "Reservation Checker <onboarding@resend.dev>",
+    from: "Reservation Checker <test@resend.dev>",
     to: [NOTIFY_EMAIL],
     subject,
     html: `<p>${body}</p>`,
@@ -61,25 +63,23 @@ async function main() {
 
   console.log("Connecting to browserless...");
 
-  let browser: Browser;
-  try {
-    browser = await connect({
-      headless: true,
-      // endpoint: `wss://production-sfo.browserless.io?token=${BROWSERLESS_TOKEN}`,
-      endpoint: `wss://production-sfo.browserless.io/chromium/playwright?token=${BROWSERLESS_TOKEN}`,
-    });
-  } catch (err) {
-    console.error("Failed to connect to browserless:", err);
-    throw err;
-  }
+  const browser = await puppeteer.launch({
+    headless: false,
+    executablePath:
+      "/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+  // const browser = await puppeteer.connect({
+  //   browserWSEndpoint: `wss://production-sfo.browserless.io/stealth?token=${BROWSERLESS_TOKEN}&proxy=residential&proxyCountry=jp&proxyLocaleMatch=1&proxySticky`,
+  // });
 
   console.log("Browser connected");
 
-  const page = await browser.newPage(TARGET_URL);
+  const page = await browser.newPage();
+
+  await page.goto(TARGET_URL, { waitUntil: "networkidle0" });
 
   console.log(`Navigated to: ${TARGET_URL}`);
-
-  await page.waitForNetworkIdle({ idleConnections: 0, idleTime: 1000 });
 
   let iteration = 0;
   while (true) {
@@ -90,6 +90,12 @@ async function main() {
 
     iteration++;
     console.log(`Checking page ${iteration}:`);
+
+    // Check for "Blocked" title
+    const bodyText = await page.evaluate(() => document.body.innerText);
+    if (bodyText.includes("不正な通信")) {
+      throw new Error("Request blocked");
+    }
 
     // check for svg with aria-label="予約可能" inside `table.time--table` (appointment exists svg)
     const hasReservation = await page.evaluate(() => {
@@ -112,25 +118,11 @@ async function main() {
 
     console.log("No reservation found on this page.");
 
-    // find the next button
-    const buttonState = await page.evaluate(() => {
-      const inputs = document.querySelectorAll("input.button");
-      for (const input of inputs) {
-        if ((input as HTMLInputElement).value === "2週後＞") {
-          return {
-            found: true,
-            disabled: (input as HTMLInputElement).disabled,
-          };
-        }
-      }
-      return {
-        found: false,
-        disabled: false,
-      };
-    });
+    const nextButton = await page.$(nextButtonSelector);
 
-    if (!buttonState.found) {
+    if (!nextButton) {
       console.log("Next page button not found!");
+      console.log(await page.content());
       await sendEmail(
         "Next page button not found",
         "Page structure likely chaged.",
@@ -138,7 +130,12 @@ async function main() {
       return;
     }
 
-    if (buttonState.disabled) {
+    const nextButtonDisabled = await page.evaluate(
+      (el) => el.disabled,
+      nextButton,
+    );
+
+    if (nextButtonDisabled) {
       console.log("Next page button is disabled. No more pages to check.");
       return;
     }
@@ -146,20 +143,19 @@ async function main() {
     // go to next page and try again
     console.log(`Clicking next button`);
 
-    await page.evaluate(() => {
-      const inputs = document.querySelectorAll("input.button");
-      for (const input of inputs) {
-        if ((input as HTMLInputElement).value === "2週後＞") {
-          (input as HTMLInputElement).click();
-          return;
-        }
-      }
-    });
+    nextButton.click();
 
-    await page.waitForNetworkIdle({
-      idleConnections: 0,
-      idleTime: 1000,
-    });
+    // await page.evaluate(() => {
+    //   const inputs = document.querySelectorAll("input.button");
+    //   for (const input of inputs) {
+    //     if ((input as HTMLInputElement).value === "2週後＞") {
+    //       (input as HTMLInputElement).click();
+    //       return;
+    //     }
+    //   }
+    // });
+
+    await page.waitForNetworkIdle({ idleTime: 1000 });
   }
 }
 
