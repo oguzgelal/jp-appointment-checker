@@ -1,14 +1,21 @@
+/// <reference lib="deno.unstable" />
+
 import { launch } from "jsr:@astral/astral";
 import { Resend } from "npm:resend";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
 const NOTIFY_EMAIL = Deno.env.get("NOTIFY_EMAIL")!;
 
+// every 3 hours, send an email indicating the script is still running
+const CHECK_IN_EMAIL_INTERVAL_SECS = 10800;
+const CHECK_IN_EMAIL_KEY = "lastCheckInEmailSentAt";
+
 if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
   console.error("env variables missing");
   Deno.exit(1);
 }
 
+const kv = await Deno.openKv();
 const resend = new Resend(RESEND_API_KEY);
 
 const ITERATION_MAX_COUNT = 20;
@@ -30,8 +37,29 @@ async function sendEmail(subject: string, body: string): Promise<void> {
   }
 }
 
+async function checkInEmail(): Promise<void> {
+  const now = Date.now();
+  const lastCheckIn = await kv.get<number>([CHECK_IN_EMAIL_KEY]);
+  if (
+    !lastCheckIn.value ||
+    now - lastCheckIn.value >= CHECK_IN_EMAIL_INTERVAL_SECS * 1000
+  ) {
+    console.log("Sending check-in email...");
+    await kv.set([CHECK_IN_EMAIL_KEY], now);
+    await sendEmail(
+      "Reservation checker is running",
+      "The reservation checker script is still running without errors.",
+    );
+  } else {
+    console.log("Check-in email recently sent. Skipping.");
+  }
+}
+
 async function main() {
+  await checkInEmail();
+
   console.log("Launching browser...");
+
   await using browser = await launch({ headless: true });
   await using page = await browser.newPage(TARGET_URL);
 
