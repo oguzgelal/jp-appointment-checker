@@ -1,16 +1,17 @@
 /// <reference lib="deno.unstable" />
 
-import { launch } from "jsr:@astral/astral";
+import { Browser, connect } from "jsr:@astral/astral";
 import { Resend } from "npm:resend";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
 const NOTIFY_EMAIL = Deno.env.get("NOTIFY_EMAIL")!;
+const BROWSERLESS_TOKEN = Deno.env.get("BROWSERLESS_TOKEN")!;
 
 // every 3 hours, send an email indicating the script is still running
 const CHECK_IN_EMAIL_INTERVAL_SECS = 10800;
 const CHECK_IN_EMAIL_KEY = "lastCheckInEmailSentAt";
 
-if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
+if (!RESEND_API_KEY || !NOTIFY_EMAIL || !BROWSERLESS_TOKEN) {
   console.error("env variables missing");
   Deno.exit(1);
 }
@@ -58,10 +59,23 @@ async function checkInEmail(): Promise<void> {
 async function main() {
   await checkInEmail();
 
-  console.log("Launching browser...");
+  console.log("Connecting to browserless...");
 
-  await using browser = await launch({ headless: true });
-  await using page = await browser.newPage(TARGET_URL);
+  let browser: Browser;
+  try {
+    browser = await connect({
+      headless: true,
+      // endpoint: `wss://production-sfo.browserless.io?token=${BROWSERLESS_TOKEN}`,
+      endpoint: `wss://production-sfo.browserless.io/chromium/playwright?token=${BROWSERLESS_TOKEN}`,
+    });
+  } catch (err) {
+    console.error("Failed to connect to browserless:", err);
+    throw err;
+  }
+
+  console.log("Browser connected");
+
+  const page = await browser.newPage(TARGET_URL);
 
   console.log(`Navigated to: ${TARGET_URL}`);
 
