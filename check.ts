@@ -1,5 +1,3 @@
-/// <reference lib="deno.unstable" />
-
 import { launch } from "jsr:@astral/astral";
 import { Resend } from "npm:resend";
 
@@ -10,7 +8,7 @@ const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
 const NOTIFY_EMAIL = Deno.env.get("NOTIFY_EMAIL")!;
 
 // every 3 hours, send an email indicating the script is still running
-const CHECK_IN_EMAIL_INTERVAL_SECS = 10800;
+// const CHECK_IN_EMAIL_INTERVAL_SECS = 10800;
 
 if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
   console.error("env variables missing");
@@ -23,7 +21,6 @@ const ITERATION_MAX_COUNT = 20;
 const TARGET_URL =
   "https://www.keishicho-gto.metro.tokyo.lg.jp/keishicho-u/reserve/offerList_detail?tempSeq=445&accessFrom=offerList";
 
-let lastCheckInEmail = 0;
 
 async function sendEmail(subject: string, body: string): Promise<void> {
   console.log(`Sending email: ${subject}`);
@@ -40,26 +37,7 @@ async function sendEmail(subject: string, body: string): Promise<void> {
   }
 }
 
-async function checkInEmail(): Promise<void> {
-  const now = Date.now();
-  if (
-    !lastCheckInEmail ||
-    now - lastCheckInEmail >= CHECK_IN_EMAIL_INTERVAL_SECS * 1000
-  ) {
-    console.log("Sending check-in email...");
-    lastCheckInEmail = now;
-    await sendEmail(
-      "Reservation checker is running",
-      "The reservation checker script is still running without errors.",
-    );
-  } else {
-    console.log("Check-in email recently sent. Skipping.");
-  }
-}
-
 async function main() {
-  await checkInEmail();
-
   console.log("Launching browser...");
 
   await using browser = await launch({ headless: true });
@@ -92,7 +70,7 @@ async function main() {
     if (hasReservation) {
       console.log("Reservation available!");
       await sendEmail(
-        "Reservation available",
+        `Reservation available (page: ${iteration})`,
         `A reservation slot was found on the Tokyo driver's license conversion page.<br><br>` +
           `<a href="${TARGET_URL}">Click here to book</a>`,
       );
@@ -121,14 +99,20 @@ async function main() {
     if (!buttonState.found) {
       console.log("Next page button not found!");
       await sendEmail(
-        "Next page button not found",
-        "Page structure likely chaged.",
+        "Cannot locate next button",
+        "Page structure likely chaged or request is blocked.",
       );
-      return;
+      
+      Deno.exit()
     }
 
     if (buttonState.disabled) {
       console.log("Next page button is disabled. No more pages to check.");
+      await sendEmail(
+        `No reservations in ${iteration} pages`,
+        `Checked all ${iteration} pages and found no reservations.`
+      );
+      
       return;
     }
 
