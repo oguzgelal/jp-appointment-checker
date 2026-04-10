@@ -1,14 +1,16 @@
 import { launch } from "jsr:@astral/astral";
 import { Resend } from "npm:resend";
 
-// 30 mins
-const INTERVAL = 30 * 60 * 1000;
-
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
 const NOTIFY_EMAIL = Deno.env.get("NOTIFY_EMAIL")!;
+const FAIL_COUNT_LIMIT = 5
+const FAIL_COUNT_NEXT_CHECK_INCREASE_BY = 10
+const ITERATION_MAX_COUNT = 20;
+const TARGET_URL =
+  "https://www.keishicho-gto.metro.tokyo.lg.jp/keishicho-u/reserve/offerList_detail?tempSeq=445&accessFrom=offerList";
 
-// every 3 hours, send an email indicating the script is still running
-// const CHECK_IN_EMAIL_INTERVAL_SECS = 10800;
+let failCount = 0
+let nextCheckInMins = getRandom(10, 30)
 
 if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
   console.error("env variables missing");
@@ -17,10 +19,21 @@ if (!RESEND_API_KEY || !NOTIFY_EMAIL) {
 
 const resend = new Resend(RESEND_API_KEY);
 
-const ITERATION_MAX_COUNT = 20;
-const TARGET_URL =
-  "https://www.keishicho-gto.metro.tokyo.lg.jp/keishicho-u/reserve/offerList_detail?tempSeq=445&accessFrom=offerList";
+// inclusive
+function getRandom(min: number, max: number) {
+  const minCeiled = Math.ceil(min);
+  const maxFloored = Math.floor(max);
+  return Math.floor(Math.random() * (maxFloored - minCeiled + 1) + minCeiled);
+}
 
+// sleep for ms
+function sleep(mins: number) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve(true)
+    }, mins * 60 * 1000)
+  })
+}
 
 async function sendEmail(subject: string, body: string): Promise<void> {
   console.log(`Sending email: ${subject}`);
@@ -70,8 +83,8 @@ async function main() {
     if (hasReservation) {
       console.log("Reservation available!");
       await sendEmail(
-        `Reservation available (page: ${iteration})`,
-        `A reservation slot was found on the Tokyo driver's license conversion page.<br><br>` +
+        `Reservation available!`,
+        `A reservation slot was found on <b>page ${iteration}</b>. Next check in ${nextCheckInMins}min..<br><br>` +
           `<a href="${TARGET_URL}">Click here to book</a>`,
       );
       return;
@@ -97,21 +110,32 @@ async function main() {
     });
 
     if (!buttonState.found) {
-      console.log("Next page button not found!");
-      await sendEmail(
-        "Cannot locate next button",
-        "Page structure likely chaged or request is blocked.",
-      );
-      
-      Deno.exit()
+      failCount++
+      const title = "Next page button not found!"
+      let msg = "Request likely blocked, or page structure chaged."
+      if (failCount > FAIL_COUNT_LIMIT) {
+        msg = `${msg}. Attempt limit reached, exiting.`
+        console.log(title, msg)
+        await sendEmail(title, msg);
+        Deno.exit()
+      } else {
+        // increase next check in case of failure, as it's possible for the
+        // page to break consecutively for a period of time
+        nextCheckInMins += (failCount - 1) * FAIL_COUNT_NEXT_CHECK_INCREASE_BY
+        msg = `${msg}. Attempt ${failCount}. Next check in ${nextCheckInMins}min...`
+        console.log(title, msg)
+        await sendEmail(title, msg);
+        return;
+      }
     }
 
     if (buttonState.disabled) {
       console.log("Next page button is disabled. No more pages to check.");
-      await sendEmail(
-        `No reservations in ${iteration} pages`,
-        `Checked all ${iteration} pages and found no reservations.`
-      );
+      // todo: should i send "not found" emails?
+      // await sendEmail(
+      //   `No reservations in ${iteration} pages. Next check in ${nextCheckInMins}min...`,
+      //   `Checked all ${iteration} pages and found no reservations.`
+      // );
       
       return;
     }
@@ -136,9 +160,9 @@ async function main() {
   }
 }
 
-const run = () => {
+async function run() {
   console.log("Starting reservation check...");
-  main().catch(async (err) => {
+  return await main().catch(async (err) => {
     console.error("Script error:", err);
     try {
       await sendEmail(
@@ -151,5 +175,9 @@ const run = () => {
   });
 };
 
-run();
-setInterval(run, INTERVAL);
+while(true) {
+  nextCheckInMins = getRandom(10, 30)
+  await run();
+  console.log(`Next check in ${nextCheckInMins} mins`)
+  await sleep(nextCheckInMins)
+}
