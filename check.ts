@@ -127,6 +127,8 @@ async function main() {
         await sendEmail(title, msg);
         return;
       }
+    } else {
+      failCount = 0;
     }
 
     if (buttonState.disabled) {
